@@ -1,31 +1,37 @@
-  require("dotenv").config();
-  const fs = require("fs");//files aur folders ke saath kaam karne ke liye use hota hai.
+ require("dotenv").config();
+  const fs = require("fs");
   const express = require('express');
   const mongoose = require('mongoose');
-  const multer = require("multer");//multer is used to save the files like images pdf etc
-  const pdfParse = require("pdf-parse");//pdf ka content extract krta h
-  const Groq = require("groq-sdk");//grok  use kr rhe h
-  const Tesseract = require("tesseract.js");
   const User = require('./models/user');
+
+  const multer = require("multer");
+  const pdfParse = require("pdf-parse");
+  const Groq = require("groq-sdk");
+  const Tesseract = require("tesseract.js");
   const Summary = require("./models/summary");
   const Quiz = require("./models/quiz");
   const Doubt = require("./models/Doubt");
+  const bcrypt = require("bcrypt");
+  const session = require("express-session");
   const Flashcard = require("./models/flashcard");
   const chat=require("./models/chat");
-  const bcrypt = require("bcrypt");//password hashing library
-  const session = require("express-session");//authentication ke lie session use kar rhe
 
 
-  const app = express();//express function joh return krta h object usko app me store krte h
+
+  const app = express();
   const port = 3000;
   const upload = multer({ storage: multer.memoryStorage() });
-  app.set("view engine","ejs");//Express ko batata hai ki rendering ke liye EJS use karni hai.
+  app.set("view engine", "ejs");
   app.set("views", "./views");
 
-  app.use(express.json());//JSON data ko parse karta hai.
-  app.use(express.urlencoded({ extended: true }));//HTML forms se aane wale data ko parse karta hai.
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
-  app.use(express.static('public'));//public files of browser me access krne deta h but is sproject me koi bhi public file sh hi nhi toh bhi isko use kia gya h kyu ki shyd kahi use askta h
+  app.use(express.static('public'));
+
+
+
+
 
 // MongoDB connection
 const dbURI = process.env.MONGO_URI;
@@ -55,9 +61,7 @@ mongoose.connect(dbURI)
 if(req.session.userId){
 return res.redirect("/dashboard");
 }
-else{
 res.render("login");
-}
 });
 
 
@@ -68,44 +72,57 @@ app.get("/signup", (req, res) => {
 
 
   app.post("/login", async (req, res) => {
+
   const { username, password } = req.body;
+
   const user = await User.findOne({ username });
+
   if (!user) {
     return res.render("login", { error: "⚠️ User not found. Please sign up first." });
   }
+
   // compare hashed password
   const match = await bcrypt.compare(password, user.password);
+
   if (!match) {
     return res.render("login", { error: "⚠️ Incorrect password. Try again." });
   }
+
   // store user in session
-  req.session.userId = user._id;//yeh user id login krte time req.session.userid me save ho jaegi fir har time bss check hog aki yeh h ki nhi 
+  req.session.userId = user._id;
+
   res.redirect("/dashboard");
+
   });
-
-
   app.post("/signup", async (req, res) => {
+
   const { username, email, password } = req.body;
+
   // hash password
   const hashedPassword = await bcrypt.hash(password, 10);
+
   const newUser = new User({
     username,
     email,
     password: hashedPassword
   });
+
   await newUser.save();
+
   // login user after signup
   req.session.userId = newUser._id;
+
   res.redirect("/dashboard");
+
   });
-
-
   function isLoggedIn(req,res,next){
+
   if(req.session.userId){
     next();
   }else{
     res.render("login", { error: "⚠️ Please login first." });
   }
+
 }
 
   app.get('/dashboard', isLoggedIn, (req, res) => {
@@ -114,20 +131,17 @@ app.get("/signup", (req, res) => {
 
   app.get("/summarize", isLoggedIn,async (req,res)=>{
     const summary = await Summary.findOne({ user: req.session.userId }).sort({ createdAt: -1 });
-      res.render("summarize", {
-        summary: null
-    });
+  res.render("summarize",{summary: null});
   });
 
 
-  //post for summary
   app.post("/summarize", upload.single("file"), async (req,res)=>{
   try {
   let text = "";
   if(!req.file){
   return res.send("No file uploaded");
   }
-  const fileBuffer = req.file.buffer;//joh file hoti h nodejs me buffer ke form me store hoti h
+  const fileBuffer = req.file.buffer;
   const fileType = req.file.mimetype;
   if(fileType === "application/pdf"){
   const data = await pdfParse(fileBuffer);
@@ -135,7 +149,7 @@ app.get("/signup", (req, res) => {
   }
   else if(fileType.startsWith("image/")){
   const result = await Tesseract.recognize(fileBuffer,"eng");
-  text = result.data.text;//tesseract direct data return nhi krta h balki bahot sara data deta h islie result.data.text krte h ki bss mail data  mile
+  text = result.data.text;
   }
   else{
   return res.send("Unsupported file format");
@@ -146,23 +160,18 @@ app.get("/signup", (req, res) => {
   messages: [
   {
   role: "user",
-  content: `
-Read the following document and create a short study-friendly summary.
-Requirements:
-- Use bullet points
-- Highlight important concepts
-- Keep it concise
-- Use simple language
-Document:
-${text}
-` }]});
-  const summary = completion.choices[0].message.content;//isme dekho completion.choices ek array h jiska first index lo aur uske andr messege me aau fir uske andr content to joh main content h vh dikh jaega
-  await Summary.create({//yeh toh mongodb me save kr rhe h
+  content: `Summarize this document in short bullet points:\n\n${text}`
+  }
+  ]
+  });
+  const summary = completion.choices[0].message.content;
+  await Summary.create({
       filename: req.file.originalname,
   originalText: text,
   user: req.session.userId,
   summary: summary
   });
+
   res.render("summarize",{summary});
   }
   catch(err){
@@ -171,119 +180,73 @@ ${text}
   }
   });
 
-
-  //get for quiz
   app.get("/quiz",isLoggedIn,(req,res)=>{
     const quiz = Quiz.findOne({ user: req.session.userId }).sort({ createdAt: -1 });
   res.render("quiz",{quiz: null});
   }
   );
-
-
-  //post for quiz
-app.post("/quiz", upload.single("file"), async (req, res) => {
+  app.post("/quiz", upload.single("file"), async (req, res) => {
   try {
-    let text = "";
-
-    if (!req.file) {
-      return res.send("No file uploaded");
-    }
     const fileBuffer = req.file.buffer;
-    const fileType = req.file.mimetype;
-    if (fileType === "application/pdf") {
-      const pdfData = await pdfParse(fileBuffer);
-      text = pdfData.text;
-    }
-    else if (fileType.startsWith("image/")) {
-      const result = await Tesseract.recognize(fileBuffer, "eng");
-      text = result.data.text;
-    }
-    else {
-      return res.send("Unsupported file format");
-    }
-    text = text.substring(0, 4000);
-    const response = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [{
-        role: "user",
-        content: `
-Read the document and provide:
-
-1. A short summary
-2. ten quiz questions
-3. Answers for each question
-
-Document:
-${text}
-`      }]
-    });
-    const quiz = response.choices[0].message.content;
-    await Quiz.create({
-      filename: req.file.originalname,
-      quizText: quiz,
-      user: req.session.userId,
-    });
-    res.render("quiz", { quiz });
-  } catch (error) {
-    console.log(error);
-    res.send("Error generating quiz");
+  const pdfData = await pdfParse(fileBuffer);
+  const text=pdfData.text.substring(0,4000);
+  const response = await groq.chat.completions.create({
+  model: "llama-3.3-70b-versatile",
+  messages: [
+  {
+  role: "user",
+  content: `Generate summary and 5 quiz questions (with answers) from this text:\n\n${text}`
   }
-});
+  ],
+  });
+  const quiz = response.choices[0].message.content;
+  await Quiz.create({
+  filename: req.file.originalname,
+  quizText: quiz,
+  user: req.session.userId,
+  });
+
+  res.render("quiz",{quiz});
+  } catch (error) {
+  console.log(error);
+  res.send("Error generating quiz");
+  }
+  });
 
 
   app.get("/doubt", isLoggedIn, (req, res) => {
-    const doubt = await Doubt.findOne({ user: req.session.userId }).sort({ createdAt: -1 });
+    const doubt = Doubt.findOne({ user: req.session.userId }).sort({ createdAt: -1 });
     res.render("doubt", { answer: null, question: "" });
   });
   app.post("/doubt", isLoggedIn, async (req, res) => {
+
   try{
+
   const question = req.body.question;
+
   const prompt = `
-You are an expert AI tutor helping students understand concepts deeply.
+  You are an AI tutor helping a student understand concepts clearly.
 
-Answer the following question in a clear, beginner-friendly, and structured manner.
+  Explain the following question in a structured and easy way.
 
-Instructions:
-- Use simple language.
-- Explain step by step.
-- Avoid unnecessary jargon.
-- Give practical examples whenever possible.
-- Focus on understanding, not memorization.
-- Do NOT invent or generate URLs.
-- For further learning, recommend only well-known and trustworthy resources by name.
+  Use this format:
+  ## Concept
+  Explain the concept clearly in simple words.
 
-Format:
+  ## Key Points
+  - Important idea 1
+  - Important idea 2
+  - Important idea 3
 
-## Concept
-Briefly explain the concept.
+  ## Example
+  Give a simple example if possible.
 
-## Detailed Explanation
-Explain the concept step by step.
+  ## Summary
+  Short 1–2 line recap.
 
-## Key Points
-- Important point 1
-- Important point 2
-- Important point 3
-
-## Example
-Provide a simple real-world example.
-
-## Further Learning
-Recommend 3–5 trusted resources by name only, such as:
-- Official documentation
-- MDN Web Docs
-- FreeCodeCamp
-- MongoDB University
-- Books or courses related to the topic
-
-Do not provide URLs.
-
-## Summary
-Provide a short 1–2 line recap.
-
-Question:
-${question}
-`;
+  Question:
+  ${question}
+  `;
 
   const response = await groq.chat.completions.create({
   messages:[{ role:"user", content: prompt }],
@@ -296,18 +259,23 @@ ${question}
   answer,
   userId: req.session.userId
   });
+
+
   res.render("doubt",{ answer, question });
+
   }catch(err){
+
   console.log(err);
   res.send("Error generating answer");
   }
   });
 
+
+
   app.get("/notes",isLoggedIn,async (req, res) => {
     const summaries = await Summary.find({ user: req.session.userId }).sort({ createdAt: -1 });
     const quizzes = await Quiz.find({ user: req.session.userId }).sort({ createdAt: -1 });
     const doubts = await Doubt.find({ userId: req.session.userId }).sort({ createdAt: -1 });  
-    
 
   res.render("notes", {
   summaries,
@@ -446,6 +414,12 @@ Never give long paragraph explanations unless asked.
     // ✅ 5. Call AI
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
+      messages: [
+        {
+          role: "user",
+          content: userMessage
+        }
+      ]
       messages: messages,
       temperature: 0.7   // more natural responses
     });
