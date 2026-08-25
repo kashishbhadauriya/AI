@@ -1,4 +1,4 @@
-  require("dotenv").config();
+ require("dotenv").config();
   const fs = require("fs");
   const express = require('express');
   const mongoose = require('mongoose');
@@ -30,7 +30,7 @@
   app.use(express.static('public'));
 
 
-  
+
 
 
 // MongoDB connection
@@ -402,7 +402,22 @@ Rules:
 
 The student has uploaded a PDF or image.
 
+<<<<<<< HEAD
 Use the uploaded document as the PRIMARY SOURCE for answering the student's questions.
+=======
+    // ✅ 5. Call AI
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [
+        {
+          role: "user",
+          content: userMessage
+        }
+      ]
+      messages: messages,
+      temperature: 0.7   // more natural responses
+    });
+>>>>>>> df158ade8e8778e83e1008170fa2ab8d64fc096b
 
 UPLOADED DOCUMENT:
 ========================
