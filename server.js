@@ -52,6 +52,8 @@ mongoose.connect(dbURI)
     resave: false,
     saveUninitialized: false
   }));
+
+  
   app.get("/login", (req, res) => {
   res.render("login", { error: null }); 
 });
@@ -156,7 +158,7 @@ app.get("/signup", (req, res) => {
   }
   text = text.slice(0,4000);
   const completion = await groq.chat.completions.create({
-  model: "llama-3.3-70b-versatile",
+    model: "openai/gpt-oss-120b",
   messages: [
   {
   role: "user",
@@ -191,7 +193,7 @@ app.get("/signup", (req, res) => {
   const pdfData = await pdfParse(fileBuffer);
   const text=pdfData.text.substring(0,4000);
   const response = await groq.chat.completions.create({
-  model: "llama-3.3-70b-versatile",
+  model: "openai/gpt-oss-120b",
   messages: [
   {
   role: "user",
@@ -250,7 +252,7 @@ app.get("/signup", (req, res) => {
 
   const response = await groq.chat.completions.create({
   messages:[{ role:"user", content: prompt }],
-  model:"llama-3.1-8b-instant"
+  model:"openai/gpt-oss-120b"
   });
 
   const answer = response.choices[0].message.content;
@@ -310,7 +312,7 @@ app.post("/flashcards", async (req, res) => {
     try {
 
         const completion = await groq.chat.completions.create({
-            model: "llama-3.1-8b-instant",
+            model: "openai/gpt-oss-120b",
             messages: [
                 {
                     role: "user",
@@ -357,87 +359,210 @@ app.get("/chat", isLoggedIn, (req,res)=>{
 res.render("chat", { chats });
 });
 
-
 app.post("/chat", async (req, res) => {
 
-  const userMessage = req.body.message;
+    const userMessage = req.body.message;
 
-  try {
+    try {
 
-    // ✅ 1. Get LAST chats (important)
-    const previousChats = await chat.find({ user: req.session.userId })
-      .sort({ createdAt: -1 })   // latest first
-      .limit(20);                // more context
+        // 1. Get previous chats
+        const previousChats = await chat.find({
+            user: req.session.userId
+        })
+        .sort({ createdAt: -1 })
+        .limit(20);
 
-    // reverse to maintain correct order
-    previousChats.reverse();
+        // Maintain correct order
+        previousChats.reverse();
 
-    // ✅ 2. Strong SYSTEM PROMPT
-    let messages = [
-      {
-        role: "system",
-   content: `
+
+        // 2. Get uploaded PDF/image text
+        const documentText = req.session.documentText || "";
+
+
+        // 3. Create system prompt
+        let systemPrompt = `
 You are StudyMind AI, a smart student-friendly assistant.
 
 Rules:
-- Always give answers in clean format
-- Use headings and bullet points
-- Keep answers short and clear
-- Avoid long paragraphs
-- Make answers look like exam notes
-- Highlight keywords using bold
-- Structure like:
+- Always give answers in clean format.
+- Use headings and bullet points.
+- Keep answers short and clear.
+- Avoid long paragraphs.
+- Make answers look like exam notes.
+- Highlight keywords using bold.
+- Explain difficult concepts in simple language.
+`;
 
-Definition
-Then points
-Then types
 
-Never give long paragraph explanations unless asked.
-`
-      }
-    ];
+        // 4. If a document was uploaded, add it to the prompt
+        if (documentText) {
 
-    // ✅ 3. Add history properly
-    previousChats.forEach(chat => {
-      messages.push(
-        { role: "user", content: chat.message },
-        { role: "assistant", content: chat.response }
-      );
-    });
+            systemPrompt += `
 
-    // ✅ 4. Add current message
-    messages.push({
-      role: "user",
-      content: userMessage
-    });
+The student has uploaded a PDF or image.
 
-    // ✅ 5. Call AI
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: messages,
-      temperature: 0.7   // more natural responses
-    });
+Use the uploaded document as the PRIMARY SOURCE for answering the student's questions.
 
-    const reply = completion.choices[0].message.content;
+UPLOADED DOCUMENT:
+========================
 
-    // ✅ 6. Save
-    await chat.create({
-      message: userMessage,
-      response: reply,
-      user: req.session.userId
-    });
+${documentText}
 
-    res.json({ reply });
+========================
 
-  } catch (err) {
-    console.log(err);
-    res.status(500).send("AI Error");
-  }
+IMPORTANT RULES:
+
+1. Answer the student's question based on the uploaded document.
+2. If the student asks "explain this PDF", explain the important topics from the document.
+3. If the student asks about a particular topic, find that topic in the document and explain it.
+4. If the document contains code, explain the code from the document.
+5. Do not invent information that is not present in the document.
+6. If the answer cannot be found in the document, say:
+   "I couldn't find this information in the uploaded document."
+7. Explain the answer in simple student-friendly language.
+`;
+        }
+
+
+        // 5. Create messages
+        let messages = [
+            {
+                role: "system",
+                content: systemPrompt
+            }
+        ];
+
+
+        // 6. Add previous chat history
+        previousChats.forEach(previousChat => {
+
+            messages.push(
+                {
+                    role: "user",
+                    content: previousChat.message
+                },
+                {
+                    role: "assistant",
+                    content: previousChat.response
+                }
+            );
+
+        });
+
+
+        // 7. Add current question
+        messages.push({
+            role: "user",
+            content: userMessage
+        });
+
+
+        // 8. Call Groq
+        const completion = await groq.chat.completions.create({
+
+            model: "openai/gpt-oss-120b",
+
+            messages: messages,
+
+            temperature: 0.7
+
+        });
+
+
+        // 9. Get response
+        const reply = completion.choices[0].message.content;
+
+
+        // 10. Save chat
+        await chat.create({
+
+            message: userMessage,
+
+            response: reply,
+
+            user: req.session.userId
+
+        });
+
+
+        // 11. Send response
+        res.json({
+            reply: reply
+        });
+
+
+    } catch (err) {
+
+        console.log(err);
+
+        res.status(500).send("AI Error");
+
+    }
 
 });
+app.post("/upload-document", upload.single("file"), async (req, res) => {
 
+    try {
 
-  app.get("/logout",(req,res)=>{
+        if (!req.file) {
+            return res.status(400).json({
+                error: "No file uploaded"
+            });
+        }
+
+        let extractedText = "";
+
+        if (req.file.mimetype === "application/pdf") {
+
+            const data = await pdfParse(req.file.buffer);
+
+            extractedText = data.text;
+
+        } else if (req.file.mimetype.startsWith("image/")) {
+
+            const result = await Tesseract.recognize(
+                req.file.buffer,
+                "eng"
+            );
+
+            extractedText = result.data.text;
+
+        } else {
+
+            return res.status(400).json({
+                error: "Only PDF and image files are supported"
+            });
+
+        }
+
+        extractedText = extractedText.trim();
+
+        if (!extractedText) {
+            return res.status(400).json({
+                error: "Could not extract text"
+            });
+        }
+
+        // ⭐ THIS IS IMPORTANT
+        req.session.documentText = extractedText;
+
+        res.json({
+            success: true,
+            filename: req.file.originalname
+        });
+
+    } catch (error) {
+
+        console.log(error);
+
+        res.status(500).json({
+            error: "Error processing document"
+        });
+
+    }
+
+});  app.get("/logout",(req,res)=>{
   req.session.destroy(()=>{
   res.redirect("/");
   });
