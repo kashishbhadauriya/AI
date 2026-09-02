@@ -190,11 +190,51 @@
   });
 
   /* ── Reveal answer ── */
-  function revealAns(i, btn){
-    const el = document.getElementById('ans-' + i);
-    el.classList.toggle('open');
-    btn.textContent = el.classList.contains('open') ? '🙈 Hide Answer' : '👁 Show Answer';
+
+function revealAns(i, btn) {
+
+  const answerBox = document.getElementById('ans-' + i);
+
+  // Show/hide answer
+  answerBox.classList.toggle('open');
+
+  if (answerBox.classList.contains('open')) {
+
+    btn.textContent = '🙈 Hide Answer';
+
+    // Get correct answer from the answer box
+    const answerText = answerBox.querySelector('strong').textContent;
+
+    // Extract A/B/C/D
+    const match = answerText.match(/Answer:\s*([A-D])/i);
+
+    if (match) {
+
+      const correctAnswer = match[1].toUpperCase();
+
+      const correctOption =
+        document.getElementById(
+          `option-${i}-${correctAnswer}`
+        );
+
+      if (correctOption) {
+        correctOption.classList.add('correct');
+      }
+    }
+
+  } else {
+
+    btn.textContent = '👁 Show Answer';
+
+    // Remove correct highlighting
+    document
+      .querySelectorAll(`[id^="option-${i}-"]`)
+      .forEach(option => {
+        option.classList.remove('correct');
+      });
   }
+}
+
 
   /* ── Copy quiz ── */
   function copyQuiz(){

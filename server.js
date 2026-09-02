@@ -184,7 +184,24 @@ app.get("/signup", (req, res) => {
   else{
   return res.send("Unsupported file format");
   }
-  text = text.slice(0,4000);
+ function chunkText(text, chunkSize = 4000) {
+    const chunks = [];
+
+    for (let i = 0; i < text.length; i += chunkSize) {
+        chunks.push(text.slice(i, i + chunkSize));
+    }
+
+    return chunks;
+}
+
+const chunks = chunkText(text, 4000);
+
+console.log("Total characters:", text.length);
+console.log("Number of chunks:", chunks.length);
+
+chunks.forEach((chunk, index) => {
+    console.log(`Chunk ${index + 1} length:`, chunk.length);
+});
   const completion = await groq.chat.completions.create({
     model: "openai/gpt-oss-120b",
   messages: [
@@ -215,33 +232,110 @@ app.get("/signup", (req, res) => {
   res.render("quiz",{quiz: null});
   }
   );
-  app.post("/quiz", upload.single("file"), async (req, res) => {
-  try {
-    const fileBuffer = req.file.buffer;
-  const pdfData = await pdfParse(fileBuffer);
-  const text=pdfData.text.substring(0,4000);
-  const response = await groq.chat.completions.create({
-  model: "openai/gpt-oss-120b",
-  messages: [
-  {
-  role: "user",
-  content: `Generate summary and 5 quiz questions (with answers) from this text:\n\n${text}`
-  }
-  ],
-  });
-  const quiz = response.choices[0].message.content;
-  await Quiz.create({
-  filename: req.file.originalname,
-  quizText: quiz,
-  user: req.session.userId,
-  });
 
-  res.render("quiz",{quiz});
+
+app.post("/quiz", upload.single("file"), async (req, res) => {
+  try {
+    // 1. Extract text from PDF
+    const fileBuffer = req.file.buffer;
+    const pdfData = await pdfParse(fileBuffer);
+    const text = pdfData.text;
+
+    // 2. Divide text into chunks of 4000 characters
+    const chunkSize = 4000;
+    const chunks = [];
+
+    for (let i = 0; i < text.length; i += chunkSize) {
+      chunks.push(text.substring(i, i + chunkSize));
+    }
+
+    console.log("Total characters:", text.length);
+    console.log("Number of chunks:", chunks.length);
+
+    // 3. Generate quiz from each chunk
+    const quizResults = [];
+
+    for (const chunk of chunks) {
+      const response = await groq.chat.completions.create({
+        model: "openai/gpt-oss-120b",
+        messages: [
+          {
+            role: "user",
+           content: `
+You are an educational quiz generator.
+
+Generate 10 high-quality multiple-choice questions (MCQs) based ONLY on the information provided in the text below.
+
+Rules:
+
+1. Use only information explicitly present in the text.
+2. Do not add outside knowledge or make assumptions.
+3. Each question must be directly answerable from the given text.
+4. Each question must have exactly 4 options: A, B, C, and D.
+5. Only one option must be correct.
+6. The correct answer must be directly supported by the text.
+7. Avoid duplicate or very similar questions.
+8. Create a mix of conceptual, factual, and understanding-based questions.
+9. Keep the questions clear, concise, and suitable for a student.
+10. If the text does not contain enough information for 10 meaningful questions, generate only as many questions as can be supported by the text.
+11. Do not invent facts to reach the required number of questions.
+
+Use EXACTLY this format:
+
+Q1. Question
+
+A) Option A
+B) Option B
+C) Option C
+D) Option D
+
+Answer: B
+
+Explanation: Brief explanation based only on the text.
+
+Q2. Question
+
+A) Option A
+B) Option B
+C) Option C
+D) Option D
+
+Answer: D
+
+Explanation: Brief explanation based only on the text.
+
+Continue this format for all questions.
+
+Text:
+
+${chunk}
+
+            `
+          }
+        ]
+      });
+
+      quizResults.push(response.choices[0].message.content);
+    }
+
+    // 4. Combine results from all chunks
+    const quiz = quizResults.join("\n\n");
+
+    // 5. Save quiz in MongoDB
+    await Quiz.create({
+      filename: req.file.originalname,
+      quizText: quiz,
+      user: req.session.userId
+    });
+
+    // 6. Render result
+    res.render("quiz", { quiz });
+
   } catch (error) {
-  console.log(error);
-  res.send("Error generating quiz");
+    console.log(error);
+    res.send("Error generating quiz");
   }
-  });
+});
 
 
   app.get("/doubt", isLoggedIn, (req, res) => {
