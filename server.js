@@ -3,11 +3,13 @@
   const express = require('express');
   const mongoose = require('mongoose');
   const User = require('./models/user');
+  
 
   const multer = require("multer");
   const pdfParse = require("pdf-parse");
   const Groq = require("groq-sdk");
   const Tesseract = require("tesseract.js");
+  const sharp = require("sharp");
   const Summary = require("./models/summary");
   const Quiz = require("./models/quiz");
   const Doubt = require("./models/Doubt");
@@ -149,10 +151,36 @@ app.get("/signup", (req, res) => {
   const data = await pdfParse(fileBuffer);
   text = data.text;
   }
-  else if(fileType.startsWith("image/")){
-  const result = await Tesseract.recognize(fileBuffer,"eng");
-  text = result.data.text;
-  }
+ else if (fileType.startsWith("image/")) {
+
+    console.log("Image detected");
+
+    // Preprocess image
+    const processedImage = await sharp(fileBuffer)
+        .resize({
+            width: 2000,
+            withoutEnlargement: false
+        })
+        .grayscale()
+        .normalize()
+        .sharpen()
+        .threshold(160)
+        .png()
+        .toBuffer();
+
+    console.log("Image preprocessing completed");
+
+    // OCR
+    const result = await Tesseract.recognize(
+        processedImage,
+        "eng"
+    );
+
+    text = result.data.text;
+
+    console.log("===== OCR OUTPUT =====");
+    console.log(text);
+}
   else{
   return res.send("Unsupported file format");
   }
