@@ -534,16 +534,19 @@ app.post("/upload-document", upload.single("file"), async (req, res) => {
 
             extractedText = data.text;
 
-        } else if (req.file.mimetype.startsWith("image/")) {
+        } 
+        else if (fileType.startsWith("image/")) {
+    console.log("Image detected");
 
-            const result = await Tesseract.recognize(
-                req.file.buffer,
-                "eng"
-            );
+    const result = await Tesseract.recognize(
+        fileBuffer,
+        "eng"
+    );
 
-            extractedText = result.data.text;
+    text = result.data.text;
 
-        } else {
+    console.log("OCR TEXT:", text);
+} else {
 
             return res.status(400).json({
                 error: "Only PDF and image files are supported"
