@@ -430,9 +430,9 @@ Rules:
 
 The student has uploaded a PDF or image.
 
-<<<<<<< HEAD
+
 Use the uploaded document as the PRIMARY SOURCE for answering the student's questions.
-=======
+
     // ✅ 5. Call AI
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
@@ -545,9 +545,7 @@ IMPORTANT RULES:
 
 });
 app.post("/upload-document", upload.single("file"), async (req, res) => {
-
     try {
-
         if (!req.file) {
             return res.status(400).json({
                 error: "No file uploaded"
@@ -556,30 +554,34 @@ app.post("/upload-document", upload.single("file"), async (req, res) => {
 
         let extractedText = "";
 
+        // PDF file
         if (req.file.mimetype === "application/pdf") {
 
             const data = await pdfParse(req.file.buffer);
-
             extractedText = data.text;
 
-        } 
-        else if (fileType.startsWith("image/")) {
-    console.log("Image detected");
+        }
 
-    const result = await Tesseract.recognize(
-        fileBuffer,
-        "eng"
-    );
+        // Image file
+        else if (req.file.mimetype.startsWith("image/")) {
 
-    text = result.data.text;
+            console.log("Image detected");
 
-    console.log("OCR TEXT:", text);
-} else {
+            const result = await Tesseract.recognize(
+                req.file.buffer,
+                "eng"
+            );
 
+            extractedText = result.data.text;
+
+            console.log("OCR TEXT:", extractedText);
+        }
+
+        // Unsupported file
+        else {
             return res.status(400).json({
                 error: "Only PDF and image files are supported"
             });
-
         }
 
         extractedText = extractedText.trim();
@@ -590,7 +592,7 @@ app.post("/upload-document", upload.single("file"), async (req, res) => {
             });
         }
 
-        // ⭐ THIS IS IMPORTANT
+        // Store extracted text in session
         req.session.documentText = extractedText;
 
         res.json({
@@ -599,16 +601,15 @@ app.post("/upload-document", upload.single("file"), async (req, res) => {
         });
 
     } catch (error) {
-
         console.log(error);
 
         res.status(500).json({
             error: "Error processing document"
         });
-
     }
+});
 
-});  app.get("/logout",(req,res)=>{
+  app.get("/logout",(req,res)=>{
   req.session.destroy(()=>{
   res.redirect("/");
   });
