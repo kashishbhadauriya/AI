@@ -50,10 +50,17 @@ mongoose.connect(dbURI)
   });
 
   app.use(session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false
-  }));
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+
+  cookie: {
+    httpOnly: true,
+    secure: false,       // true in production with HTTPS
+    sameSite: "lax",
+    maxAge: 24 * 60 * 60 * 1000
+  }
+}));
 
   
   app.get("/login", (req, res) => {
@@ -76,30 +83,22 @@ app.get("/signup", (req, res) => {
 
 
   app.post("/login", async (req, res) => {
-
   const { username, password } = req.body;
-
   const user = await User.findOne({ username });
-
   if (!user) {
     return res.render("login", { error: "⚠️ User not found. Please sign up first." });
   }
-
   // compare hashed password
   const match = await bcrypt.compare(password, user.password);
-
   if (!match) {
     return res.render("login", { error: "⚠️ Incorrect password. Try again." });
   }
-
   // store user in session
   req.session.userId = user._id;
-
   res.redirect("/dashboard");
-
   });
-  app.post("/signup", async (req, res) => {
 
+  app.post("/signup", async (req, res) => {
   const { username, email, password } = req.body;
 
   // hash password
@@ -120,46 +119,44 @@ app.get("/signup", (req, res) => {
 
   });
   function isLoggedIn(req,res,next){
-
   if(req.session.userId){
     next();
   }else{
     res.render("login", { error: "⚠️ Please login first." });
   }
-
 }
 
-  app.get('/dashboard', isLoggedIn, (req, res) => {
+  app.get('/dashboard', (req, res) => {
     res.render('dashboard');
   });
 
-  app.get("/summarize", isLoggedIn,async (req,res)=>{
+  app.get("/summarize",async (req,res)=>{
     const summary = await Summary.findOne({ user: req.session.userId }).sort({ createdAt: -1 });
   res.render("summarize",{summary: null});
   });
 
 
-  app.post("/summarize", upload.single("file"), async (req,res)=>{
+
+app.post("/summarize", upload.single("file"), async (req, res) => {
   try {
-  let text = "";
-  if(!req.file){
-  return res.send("No file uploaded");
-  }
-  const fileBuffer = req.file.buffer;
-  const fileType = req.file.mimetype;
-  if(fileType === "application/pdf"){
-  const data = await pdfParse(fileBuffer);
-  text = data.text;
-  }
- else if (fileType.startsWith("image/")) {
+    let text = "";
+    if (!req.file) {
+      return res.send("No file uploaded");
+    }
+    const fileBuffer = req.file.buffer;
+    const fileType = req.file.mimetype;
+    if (fileType === "application/pdf") {
 
-    console.log("Image detected");
+      const data = await pdfParse(fileBuffer);
+      text = data.text;
 
-    // Preprocess image
-    const processedImage = await sharp(fileBuffer)
+    }
+    else if (fileType.startsWith("image/")) {
+      console.log("Image detected");
+      const processedImage = await sharp(fileBuffer)
         .resize({
-            width: 2000,
-            withoutEnlargement: false
+          width: 2000,
+          withoutEnlargement: false
         })
         .grayscale()
         .normalize()
@@ -167,67 +164,61 @@ app.get("/signup", (req, res) => {
         .threshold(160)
         .png()
         .toBuffer();
-
-    console.log("Image preprocessing completed");
-
-    // OCR
-    const result = await Tesseract.recognize(
+      console.log("Image preprocessing completed");
+      const result = await Tesseract.recognize(
         processedImage,
         "eng"
-    );
-
-    text = result.data.text;
-
-    console.log("===== OCR OUTPUT =====");
-    console.log(text);
-}
-  else{
-  return res.send("Unsupported file format");
-  }
- function chunkText(text, chunkSize = 4000) {
-    const chunks = [];
-
-    for (let i = 0; i < text.length; i += chunkSize) {
-        chunks.push(text.slice(i, i + chunkSize));
+      );
+      text = result.data.text;
     }
-
-    return chunks;
-}
-
-const chunks = chunkText(text, 4000);
-
-console.log("Total characters:", text.length);
-console.log("Number of chunks:", chunks.length);
-
-chunks.forEach((chunk, index) => {
-    console.log(`Chunk ${index + 1} length:`, chunk.length);
-});
-  const completion = await groq.chat.completions.create({
-    model: "openai/gpt-oss-120b",
-  messages: [
-  {
-  role: "user",
-  content: `Summarize this document in short bullet points:\n\n${text}`
-  }
-  ]
-  });
-  const summary = completion.choices[0].message.content;
-  await Summary.create({
+    else {
+      return res.send("Unsupported file format");
+    }
+    function chunkText(text, chunkSize = 4000) {
+      const chunks = [];
+      for (let i = 0; i < text.length; i += chunkSize) {
+        chunks.push(text.slice(i, i + chunkSize));
+      }
+      return chunks;
+    }
+    const chunks = chunkText(text, 4000);
+    console.log("Total characters:", text.length);
+    console.log("Number of chunks:", chunks.length);
+    const summaries = [];
+    for (const [index, chunk] of chunks.entries()) {
+      console.log(`Processing chunk ${index + 1}`);
+      const completion = await groq.chat.completions.create({
+        model: "openai/gpt-oss-120b",
+        messages: [
+          {
+            role: "user",
+            content: `Summarize this part of the document in short bullet points:
+${chunk}`
+          }
+        ]
+      });
+      const chunkSummary =
+        completion.choices[0].message.content;
+      summaries.push(chunkSummary);
+    }
+    const summary = summaries.join("\n");
+    await Summary.create({
       filename: req.file.originalname,
-  originalText: text,
-  user: req.session.userId,
-  summary: summary
-  });
-
-  res.render("summarize",{summary});
+      originalText: text,
+      user: req.session.userId,
+      summary: summary
+    });
+    res.render("summarize", {
+      summary: summary
+    });
   }
-  catch(err){
-  console.log(err);
-  res.send("Error summarizing file");
+  catch (err) {
+    console.log(err);
+    res.send("Error summarizing file");
   }
-  });
+});
 
-  app.get("/quiz",isLoggedIn,(req,res)=>{
+  app.get("/quiz",(req,res)=>{
     const quiz = Quiz.findOne({ user: req.session.userId }).sort({ createdAt: -1 });
   res.render("quiz",{quiz: null});
   }
@@ -338,11 +329,11 @@ ${chunk}
 });
 
 
-  app.get("/doubt", isLoggedIn, (req, res) => {
+  app.get("/doubt", (req, res) => {
     const doubt = Doubt.findOne({ user: req.session.userId }).sort({ createdAt: -1 });
     res.render("doubt", { answer: null, question: "" });
   });
-  app.post("/doubt", isLoggedIn, async (req, res) => {
+  app.post("/doubt", async (req, res) => {
 
   try{
 
@@ -396,7 +387,7 @@ ${chunk}
 
 
 
-  app.get("/notes",isLoggedIn,async (req, res) => {
+  app.get("/notes",async (req, res) => {
     const summaries = await Summary.find({ user: req.session.userId }).sort({ createdAt: -1 });
     const quizzes = await Quiz.find({ user: req.session.userId }).sort({ createdAt: -1 });
     const doubts = await Doubt.find({ userId: req.session.userId }).sort({ createdAt: -1 });  
@@ -428,7 +419,7 @@ app.get("/flashcards", async (req, res) => {
 });
 
 
-app.post("/flashcards", async (req, res) => {
+app.post("/flashcards",async (req, res) => {
 
     const text = req.body.text;
     try {
@@ -476,34 +467,34 @@ ${text}`
 });
 
 
-app.get("/chat", isLoggedIn, (req,res)=>{
+app.get("/chat", (req,res)=>{
   const chats=chat.find({ user: req.session.userId }).sort({ createdAt: -1 });
 res.render("chat", { chats });
 });
 
-app.post("/chat", async (req, res) => {
+app.post("/chat", isLoggedIn, async (req, res) => {
 
-    const userMessage = req.body.message;
+  const userMessage = req.body.message;
 
-    try {
+  try {
 
-        // 1. Get previous chats
-        const previousChats = await chat.find({
-            user: req.session.userId
-        })
-        .sort({ createdAt: -1 })
-        .limit(20);
+    // 1. Get previous chats
+    const previousChats = await chat.find({
+      user: req.session.userId
+    })
+    .sort({ createdAt: -1 })
+    .limit(20);
 
-        // Maintain correct order
-        previousChats.reverse();
-
-
-        // 2. Get uploaded PDF/image text
-        const documentText = req.session.documentText || "";
+    // Maintain correct conversation order
+    previousChats.reverse();
 
 
-        // 3. Create system prompt
-        let systemPrompt = `
+    // 2. Get uploaded document text
+    const documentText = req.session.documentText || "";
+
+
+    // 3. Create system prompt
+    let systemPrompt = `
 You are StudyMind AI, a smart student-friendly assistant.
 
 Rules:
@@ -517,35 +508,18 @@ Rules:
 `;
 
 
-        // 4. If a document was uploaded, add it to the prompt
-        if (documentText) {
+    // 4. Add uploaded document instructions
+    if (documentText) {
 
-            systemPrompt += `
+      systemPrompt += `
 
 The student has uploaded a PDF or image.
 
-
 Use the uploaded document as the PRIMARY SOURCE for answering the student's questions.
-
-    // ✅ 5. Call AI
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        {
-          role: "user",
-          content: userMessage
-        }
-      ]
-      messages: messages,
-      temperature: 0.7   // more natural responses
-    });
->>>>>>> df158ade8e8778e83e1008170fa2ab8d64fc096b
 
 UPLOADED DOCUMENT:
 ========================
-
 ${documentText}
-
 ========================
 
 IMPORTANT RULES:
@@ -558,151 +532,188 @@ IMPORTANT RULES:
 6. If the answer cannot be found in the document, say:
    "I couldn't find this information in the uploaded document."
 7. Explain the answer in simple student-friendly language.
+
 `;
-        }
-
-
-        // 5. Create messages
-        let messages = [
-            {
-                role: "system",
-                content: systemPrompt
-            }
-        ];
-
-
-        // 6. Add previous chat history
-        previousChats.forEach(previousChat => {
-
-            messages.push(
-                {
-                    role: "user",
-                    content: previousChat.message
-                },
-                {
-                    role: "assistant",
-                    content: previousChat.response
-                }
-            );
-
-        });
-
-
-        // 7. Add current question
-        messages.push({
-            role: "user",
-            content: userMessage
-        });
-
-
-        // 8. Call Groq
-        const completion = await groq.chat.completions.create({
-
-            model: "openai/gpt-oss-120b",
-
-            messages: messages,
-
-            temperature: 0.7
-
-        });
-
-
-        // 9. Get response
-        const reply = completion.choices[0].message.content;
-
-
-        // 10. Save chat
-        await chat.create({
-
-            message: userMessage,
-
-            response: reply,
-
-            user: req.session.userId
-
-        });
-
-
-        // 11. Send response
-        res.json({
-            reply: reply
-        });
-
-
-    } catch (err) {
-
-        console.log(err);
-
-        res.status(500).send("AI Error");
 
     }
 
+
+    // 5. Create messages
+    let messages = [
+      {
+        role: "system",
+        content: systemPrompt
+      }
+    ];
+
+
+    // 6. Add previous chat history
+    previousChats.forEach(previousChat => {
+
+      messages.push(
+        {
+          role: "user",
+          content: previousChat.message
+        },
+        {
+          role: "assistant",
+          content: previousChat.response
+        }
+      );
+
+    });
+
+
+    // 7. Add current question
+    messages.push({
+      role: "user",
+      content: userMessage
+    });
+
+
+    // 8. Call Groq
+    const completion = await groq.chat.completions.create({
+
+      model: "openai/gpt-oss-120b",
+
+      messages: messages,
+
+      temperature: 0.7
+
+    });
+
+
+    // 9. Get AI response
+    const reply = completion.choices[0].message.content;
+
+
+    // 10. Save chat
+    await chat.create({
+
+      message: userMessage,
+
+      response: reply,
+
+      user: req.session.userId
+
+    });
+
+
+    // 11. Send response
+    res.json({
+      reply: reply
+    });
+
+  }
+
+  catch (err) {
+
+    console.log(err);
+
+    res.status(500).send("AI Error");
+
+  }
+
 });
-app.post("/upload-document", upload.single("file"), async (req, res) => {
+app.post(
+  "/upload-document",
+  isLoggedIn,
+  upload.single("file"),
+  async (req, res) => {
+
     try {
-        if (!req.file) {
-            return res.status(400).json({
-                error: "No file uploaded"
-            });
-        }
 
-        let extractedText = "";
+      // 1. Check file
+      if (!req.file) {
 
-        // PDF file
-        if (req.file.mimetype === "application/pdf") {
-
-            const data = await pdfParse(req.file.buffer);
-            extractedText = data.text;
-
-        }
-
-        // Image file
-        else if (req.file.mimetype.startsWith("image/")) {
-
-            console.log("Image detected");
-
-            const result = await Tesseract.recognize(
-                req.file.buffer,
-                "eng"
-            );
-
-            extractedText = result.data.text;
-
-            console.log("OCR TEXT:", extractedText);
-        }
-
-        // Unsupported file
-        else {
-            return res.status(400).json({
-                error: "Only PDF and image files are supported"
-            });
-        }
-
-        extractedText = extractedText.trim();
-
-        if (!extractedText) {
-            return res.status(400).json({
-                error: "Could not extract text"
-            });
-        }
-
-        // Store extracted text in session
-        req.session.documentText = extractedText;
-
-        res.json({
-            success: true,
-            filename: req.file.originalname
+        return res.status(400).json({
+          error: "No file uploaded"
         });
 
-    } catch (error) {
-        console.log(error);
+      }
 
-        res.status(500).json({
-            error: "Error processing document"
+
+      let extractedText = "";
+
+
+      // 2. PDF
+      if (req.file.mimetype === "application/pdf") {
+
+        const data = await pdfParse(req.file.buffer);
+
+        extractedText = data.text;
+
+      }
+
+
+      // 3. Image
+      else if (req.file.mimetype.startsWith("image/")) {
+
+        console.log("Image detected");
+
+        const result = await Tesseract.recognize(
+          req.file.buffer,
+          "eng"
+        );
+
+        extractedText = result.data.text;
+
+        console.log("OCR TEXT:", extractedText);
+
+      }
+
+
+      // 4. Unsupported file
+      else {
+
+        return res.status(400).json({
+          error: "Only PDF and image files are supported"
         });
+
+      }
+
+
+      // 5. Remove extra spaces
+      extractedText = extractedText.trim();
+
+
+      // 6. Check extracted text
+      if (!extractedText) {
+
+        return res.status(400).json({
+          error: "Could not extract text"
+        });
+
+      }
+
+
+      // 7. Store document text in session
+      req.session.documentText = extractedText;
+
+
+      // 8. Send response
+      res.json({
+
+        success: true,
+
+        filename: req.file.originalname
+
+      });
+
     }
-});
 
+    catch (error) {
+
+      console.log(error);
+
+      res.status(500).json({
+        error: "Error processing document"
+      });
+
+    }
+
+  }
+);
   app.get("/logout",(req,res)=>{
   req.session.destroy(()=>{
   res.redirect("/");
