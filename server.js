@@ -361,7 +361,7 @@ async function retrieveRelevantChunks(
         $vectorSearch: {
 
           index:
-            "vector_index",
+             "autoembed_index",
 
           path:
             "embedding",
