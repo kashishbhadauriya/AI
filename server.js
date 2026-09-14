@@ -229,8 +229,8 @@ async function processAndStoreDocument({
     const chunks =
       chunkText(
         text,
-        1000,
-        200
+        500,
+        100
       );
 
     console.log(
@@ -332,18 +332,17 @@ async function processAndStoreDocument({
 // RETRIEVE RELEVANT DOCUMENT CHUNKS
 // ======================================================
 
-async function retrieveRelevantChunks(
-  question,
-  userId,
-  limit = 5
-) {
+async function retrieveRelevantChunks(question, userId, documentId, limit = 5) {
+
+  console.log("USER ID:", userId);
+  console.log("DOCUMENT ID:", documentId);
+
+  const queryEmbedding = await getEmbedding(question);
+
 
   // --------------------------------------------------
   // 1. Create embedding for user question
   // --------------------------------------------------
-
-  const queryEmbedding =
-    await getEmbedding(question);
 
   console.log(
     "Query embedding dimensions:",
@@ -376,12 +375,10 @@ async function retrieveRelevantChunks(
             limit,
 
           filter: {
+    user: new mongoose.Types.ObjectId(userId),
 
-            user:
-              new mongoose.Types.ObjectId(
-                userId
-              )
-          }
+    documentId: documentId
+}
         }
       },
 
@@ -1583,15 +1580,12 @@ app.post(
         "Creating query embedding..."
       );
 
-      const results =
-        await retrieveRelevantChunks(
-
-          userMessage,
-
-          req.session.userId,
-
-          5
-        );
+     const results = await retrieveRelevantChunks(
+    userMessage,
+    req.session.userId,
+    req.session.documentId,
+    5
+);
 
       console.log(
         "Retrieved chunks:",
@@ -1745,6 +1739,16 @@ STRICT RULES
       // =================================================
       // 10. GROQ GENERATION
       // =================================================
+      console.log("===== RETRIEVED CONTEXT =====");
+
+results.forEach((result, i) => {
+    console.log(`\nCHUNK ${i + 1}`);
+    console.log("Filename:", result.filename);
+    console.log("Score:", result.score);
+    console.log("Text:", result.text);
+});
+
+console.log("============================");
 
       console.log(
         "Generating final answer..."
